@@ -1,0 +1,71 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 60
+
+    steps:
+      - name: Download source
+        uses: actions/checkout@v4
+
+      - name: Check Xcode
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      - name: Prepare Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              -o "$RUNNER_TEMP/rustup-init.sh"
+            sh "$RUNNER_TEMP/rustup-init.sh" -y --profile minimal
+          fi
+          source "$HOME/.cargo/env"
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build unsigned app
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          xcodebuild \
+            -project ios-app/PhoneAgent.xcodeproj \
+            -scheme PhoneAgent \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath .build/DeviceBuild \
+            -clonedSourcePackagesDirPath .build/SourcePackages \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee artifacts/build.log
+
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=".build/DeviceBuild/Build/Products/Release-iphoneos/PhoneAgent.app"
+          test -d "$APP"
+          mkdir -p .build/ipa/Payload
+          ditto "$APP" .build/ipa/Payload/PhoneAgent.app
+          cd .build/ipa
+          zip -qry "$GITHUB_WORKSPACE/artifacts/PhoneAgent-unsigned.ipa" Payload
+
+      - name: Upload package and build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PhoneAgent-build
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7
