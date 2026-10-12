@@ -1,5 +1,6 @@
 import Foundation
 import ImageIO
+import UIKit
 
 /// Persisted developer route; active bridges retain the shared connection and
 /// prevent route changes until their run has released it.
@@ -95,6 +96,16 @@ extension PairingFlow: NCMControlConnection {
             try Task.checkCancellation()
             try validate()
             _ = try await services.tapDelivery(x: x, y: y)
+            if UIAccessibility.isVoiceOverRunning {
+                // First tap selects the item under VoiceOver; the following
+                // double-tap activates the current selection.
+                try await Task.sleep(for: .milliseconds(500))
+                try Task.checkCancellation(); try validate()
+                _ = try await services.tapDelivery(x: x, y: y)
+                try await Task.sleep(for: .milliseconds(80))
+                try Task.checkCancellation(); try validate()
+                _ = try await services.tapDelivery(x: x, y: y)
+            }
         }
     }
     func agentDrag(owner: UUID, session: UUID, fromX: UInt16, fromY: UInt16, toX: UInt16, toY: UInt16, durationMS: UInt16, validate: () throws -> Void) async throws {
