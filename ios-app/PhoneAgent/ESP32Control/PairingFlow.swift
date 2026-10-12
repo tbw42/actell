@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import SwiftUI
+import UIKit
 import BackgroundTasks
 import Observation
 
@@ -271,7 +272,18 @@ enum NCMControlError: Error { case unavailable(String), stopped }
         try await self.prepareAgentInput(self.backend)
         _ = try await self.backend.tapDelivery(x: 32768, y: 32768)
         try Task.checkCancellation()
-        self.message = "已发送屏幕中心点击，请观察手机确认实际效果"
+        if UIAccessibility.isVoiceOverRunning {
+            try await Task.sleep(for: .milliseconds(500))
+            try Task.checkCancellation()
+            _ = try await self.backend.tapDelivery(x: 32768, y: 32768)
+            try await Task.sleep(for: .milliseconds(80))
+            try Task.checkCancellation()
+            _ = try await self.backend.tapDelivery(x: 32768, y: 32768)
+            try Task.checkCancellation()
+            self.message = "旁白测试：已发送选中与双击，请确认中央目标计数是否增加"
+        } else {
+            self.message = "已发送屏幕中心点击，请观察手机确认实际效果"
+        }
     } }
     private func operation(capturing: Bool = false, _ action: @escaping @MainActor () async throws -> Void) {
         guard ready, !running, !agentReserved else { return }
