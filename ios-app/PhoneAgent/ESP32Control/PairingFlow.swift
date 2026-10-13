@@ -50,6 +50,7 @@ enum NCMControlError: Error { case unavailable(String), stopped }
     private(set) var isBackground = false
     var agentReserved: Bool { !agentRuns.isEmpty || agentOwner != nil }
     private var registeredBackgroundTask = false
+    private(set) var backgroundRegistrationFailure: String?
     private var mediaStarted = false
     private let mediaLifetime = ControlMediaLifetime()
     private var job: Task<Void, Never>?
@@ -108,6 +109,11 @@ enum NCMControlError: Error { case unavailable(String), stopped }
 
     func registerBackgroundTask() {
         guard !registeredBackgroundTask else { return }
+        let permitted = Bundle.main.object(forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers") as? [String] ?? []
+        guard permitted.contains(Self.taskID) else {
+            backgroundRegistrationFailure = "安装包后台配对配置与签名不匹配，请使用匹配当前应用 ID 的安装包覆盖安装；重开 App 无法修复。应用 ID：\(Bundle.main.bundleIdentifier ?? "未知")"
+            return
+        }
         if #available(iOS 26.0, *) {
             registeredBackgroundTask = BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.taskID, using: .main) { task in
                 Task { @MainActor in
@@ -115,13 +121,14 @@ enum NCMControlError: Error { case unavailable(String), stopped }
                     Self.shared.begin(continued)
                 }
             }
+            backgroundRegistrationFailure = registeredBackgroundTask ? nil : "系统未能注册配对任务；请检查安装包签名与后台任务配置"
         }
     }
     func startPairing() {
         guard !running else { return }
         hasRecord = store.exists
         guard !hasRecord else { message = "请连接 \(route.connectionName)"; return }
-        guard registeredBackgroundTask else { message = "系统配对后台任务未注册，请重新打开 App"; return }
+        guard registeredBackgroundTask else { message = backgroundRegistrationFailure ?? "系统配对后台任务未注册，请检查安装包配置"; lastFailure = message; return }
         guard #available(iOS 26.0, *) else { message = "系统交互配对需要 iOS 26 或更新版本的持续后台任务"; return }
         generation = UUID(); running = true; pairingActive = true; message = "正在申请配对后台任务，请等待入口就绪"
         let request = BGContinuedProcessingTaskRequest(identifier: Self.taskID, title: "PhoneAgent 配对", subtitle: "在系统设置中完成授权")
@@ -206,7 +213,9 @@ enum NCMControlError: Error { case unavailable(String), stopped }
     }
     func restoreConnection() {
         hasRecord = store.exists
-        if hasRecord, !pairingActive, !running, !ready { verify() }
+        // Keep the original error visible; foreground transitions must not
+        // repeatedly reconnect and erase the evidence of a failed attempt.
+        if hasRecord, !pairingActive, !running, !ready, lastFailure == nil { verify() }
     }
     /// Called only by a device tool or App startup, never by normal chat.
     /// Concurrent waiters share the same verification job.
@@ -626,9 +635,13 @@ struct PairingSection: View {
         if flow.running { return "连接中" }
         return flow.hasRecord ? "未连接" : "未配对"
     }
+    static func shouldShowDetail(running: Bool, ready: Bool, hasRecord: Bool, failure: String?, message: String) -> Bool {
+        failure != nil || (running && !ready) ||
+        (!hasRecord && message != "请先完成系统配对")
+    }
     private var showsDetail: Bool {
-        (flow.running && !flow.ready) ||
-        (!flow.hasRecord && flow.message != "请先完成系统配对")
+        Self.shouldShowDetail(running: flow.running, ready: flow.ready, hasRecord: flow.hasRecord,
+                             failure: flow.lastFailure, message: flow.message)
     }
     var body: some View {
         Section {
@@ -639,8 +652,9 @@ struct PairingSection: View {
                         if flow.running && !flow.ready { ProgressView().controlSize(.small) }
                     }
                     if showsDetail {
-                        Text(flow.lastFailure ?? flow.statusText)
+                        Text(flow.lastFailure ?? flow.message)
                             .font(.footnote).foregroundStyle(.secondary)
+                            .textSelection(.enabled)
                             .accessibilityIdentifier("pairingResult")
                     }
                     if let pin = flow.pin {
