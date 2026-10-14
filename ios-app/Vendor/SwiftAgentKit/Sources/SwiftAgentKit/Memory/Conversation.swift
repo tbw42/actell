@@ -58,6 +58,16 @@ public class Conversation: @unchecked Sendable {
 
     /// Mutex for thread safety.
     private let lock = NSLock()
+    private var activeTaskID: UUID?
+
+    /// Only an actual run request replaces this pin; internal nudges must not.
+    public func appendTask(_ message: AgentMessage) {
+        lock.lock()
+        defer { lock.unlock() }
+        precondition(message.role == .user)
+        activeTaskID = message.id
+        messages.append(message)
+    }
 
     public init(contextWindow: Int = 8192, maxMessages: Int = 50) {
         self.contextWindow = contextWindow
@@ -134,6 +144,7 @@ public class Conversation: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         messages.removeAll()
+        activeTaskID = nil
     }
 
     /// Apply a pure transform to every stored NON-system message, in place.
@@ -205,12 +216,14 @@ public class Conversation: @unchecked Sendable {
     /// - Returns: `true` if a message was removed, `false` if only system
     ///   messages remain (nothing evictable).
     private func removeOldestNonSystemUnit(from messages: inout [AgentMessage]) -> Bool {
-        // The most recent user message is the run's ACTIVE TASK — pinned.
+        // The explicitly registered run request is pinned, even after internal
+        // loop/reasoning nudges are appended with the user role.
         // In a single-task run it is also the OLDEST non-system message, so
         // unpinned oldest-first eviction removed it first and the model lost
         // its goal mid-run ("I don't see an explicit task request from you").
         // Older user turns in a multi-turn history remain evictable.
-        let pinnedIdx = messages.lastIndex(where: { $0.role == .user })
+        let pinnedIdx = messages.firstIndex(where: { $0.id == activeTaskID })
+            ?? messages.lastIndex(where: { $0.role == .user })
         guard let idx = messages.indices.first(where: {
             messages[$0].role != .system && $0 != pinnedIdx
         }) else {
