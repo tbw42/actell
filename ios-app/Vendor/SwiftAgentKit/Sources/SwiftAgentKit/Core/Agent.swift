@@ -904,9 +904,9 @@ public actor Agent {
 
         // Add user message to conversation
         if images.isEmpty {
-            conversation.append(.user(query))
+            conversation.appendTask(.user(query))
         } else {
-            conversation.append(.user(query, images: images))
+            conversation.appendTask(.user(query, images: images))
         }
 
         // Get registered tools and strengthen system prompt (must happen before skill injection)
