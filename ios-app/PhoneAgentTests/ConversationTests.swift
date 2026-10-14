@@ -5,6 +5,27 @@ import LLMProviderKit
 @testable import PhoneAgent
 
 @MainActor final class ConversationTests: XCTestCase {
+    func testRealTaskSurvivesLoopNudgeAndTrimming() {
+        let conversation = Conversation(contextWindow: 256, maxMessages: 4)
+        conversation.outputReserve = 64
+        let task = AgentMessage.user("打开美团，点一杯冰鲜柠檬水")
+        conversation.appendTask(task)
+        for _ in 0..<40 {
+            conversation.append(.assistant(String(repeating: "页面未变化", count: 30)))
+            conversation.append(.user("Loop detected. Change your approach."))
+        }
+        _ = conversation.trim()
+        XCTAssertTrue(conversation.messagesForLLMCall().contains { $0.id == task.id })
+        let next = AgentMessage.user("改成查看外卖配送时间")
+        conversation.appendTask(next)
+        conversation.maxMessages = 1
+        _ = conversation.trim()
+        XCTAssertEqual(conversation.allMessages().map(\.id), [next.id])
+        conversation.clear()
+        conversation.append(.user("新的独立对话"))
+        _ = conversation.trim()
+        XCTAssertEqual(conversation.allMessages().count, 1)
+    }
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
