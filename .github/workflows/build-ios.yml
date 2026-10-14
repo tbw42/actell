@@ -32,8 +32,24 @@ jobs:
           source "$HOME/.cargo/env"
           rustup toolchain install stable --profile minimal
           rustup default stable
-          rustup target add aarch64-apple-ios
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Run core tests on an isolated simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          xcodebuild -resolvePackageDependencies \
+            -project ios-app/PhoneAgent.xcodeproj -scheme PhoneAgent \
+            -clonedSourcePackagesDirPath .build/SourcePackages
+          xcrun simctl list runtimes -j > "$RUNNER_TEMP/phoneagent-runtimes.json"
+          xcrun simctl list devicetypes -j > "$RUNNER_TEMP/phoneagent-devicetypes.json"
+          RUNTIME=$(python3 -c 'import json,sys; rs=[r for r in json.load(open(sys.argv[1]))["runtimes"] if r.get("isAvailable") and r["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-") and int(r["version"].split(".")[0]) >= 27]; assert rs, "No iOS 27+ simulator runtime installed"; print(max(rs,key=lambda r: tuple(map(int,r["version"].split("."))))["identifier"])' "$RUNNER_TEMP/phoneagent-runtimes.json")
+          DEVICE=$(python3 -c 'import json,sys; ds=[d for d in json.load(open(sys.argv[1]))["devicetypes"] if d.get("productFamily")=="iPhone"]; assert ds, "No iPhone simulator device type installed"; print(ds[-1]["identifier"])' "$RUNNER_TEMP/phoneagent-devicetypes.json")
+          SIMULATOR=$(xcrun simctl create "PhoneAgent-CI-$GITHUB_RUN_ID" "$DEVICE" "$RUNTIME")
+          trap 'xcrun simctl delete "$SIMULATOR"' EXIT
+          bash ios-app/scripts/test_core.sh "$SIMULATOR" 2>&1 | tee artifacts/core-tests.log
 
       - name: Build unsigned app
         shell: bash
