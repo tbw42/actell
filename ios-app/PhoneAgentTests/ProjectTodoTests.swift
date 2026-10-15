@@ -180,14 +180,21 @@ private final class LongRunProvider: LLMProvider, @unchecked Sendable {
     static let name = "long-run-fixture"
     let configuration = LLMProviderConfiguration(name: LongRunProvider.name, baseURL: URL(string: "https://invalid.invalid")!, defaultModel: "fixture")
     private var calls = 0
+    private let repeatWithoutProgress: Bool
+    init(repeatWithoutProgress: Bool = false) { self.repeatWithoutProgress = repeatWithoutProgress }
     func complete(_ request: LLMRequest) async throws -> LLMResponse {
         calls += 1
         XCTAssertNil(request.maxTokens, "No forced output-token budget")
         XCTAssertFalse(request.tools.contains { $0.name == "finish" }, "Live runs use the final answer")
-        let done = calls > 14
+        // Exercise an unbudgeted sequence separately from the identical-call guard.
+        // Distinct waits represent deliberate sampling intervals between observations.
+        let done = calls > (repeatWithoutProgress ? 14 : 28)
+        let call = !repeatWithoutProgress && calls.isMultiple(of: 2)
+            ? LLMToolCall(id: "wait-\(calls)", name: "wait", arguments: "{\"duration_ms\":\(calls)}")
+            : LLMToolCall(id: "screen-\(calls)", name: "screenshot", arguments: "{}")
         return LLMResponse(text: done ? "Observed fourteen frames" : "", finishReason: done ? .stop : .toolCalls,
             usage: LLMUsage(totalTokens: 25_000),
-            toolCalls: done ? [] : [LLMToolCall(id: "screen-\(calls)", name: "screenshot", arguments: "{}")], request: request, providerName: Self.name)
+            toolCalls: done ? [] : [call], request: request, providerName: Self.name)
     }
     func stream(_ request: LLMRequest) -> AsyncThrowingStream<LLMStreamChunk, Error> {
         AsyncThrowingStream { continuation in
@@ -217,8 +224,25 @@ private final class LongRunProvider: LLMProvider, @unchecked Sendable {
         }
         XCTAssertFalse(model.running)
         XCTAssertEqual(sessions.conversation(id)?.phase, .completed)
-        XCTAssertEqual(sessions.conversation(id)?.messages.compactMap(\.tool).count, 14)
+        XCTAssertEqual(sessions.conversation(id)?.messages.compactMap(\.tool).count, 28)
+        XCTAssertEqual(sessions.conversation(id)?.messages.compactMap(\.tool).filter { $0.name == "screenshot" }.count, 14)
         XCTAssertEqual(sessions.conversation(id)?.messages.last?.text, "Observed fourteen frames")
+        let releases = await bridge.releases; XCTAssertEqual(releases, 1)
+    }
+    func testRepeatedIdenticalObservationsStopWithClearReasonAndOneCleanup() async throws {
+        let bridge = ReleaseCounter(), sessions = ConversationStore(inMemory: true)
+        let model = AgentViewModel(sessions: sessions, loadPersistentState: false,
+            runServices: .init(provider: LongRunProvider(repeatWithoutProgress: true), bridge: bridge))
+        let id = model.createConversation(mode: .live)
+        XCTAssertTrue(model.send("查看美团冰鲜柠檬水", in: id, cloudConsent: true))
+        for _ in 0..<500 {
+            if !model.running { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertFalse(model.running)
+        XCTAssertEqual(sessions.conversation(id)?.phase, .blocked)
+        XCTAssertEqual(sessions.conversation(id)?.messages.compactMap(\.tool).count, 5)
+        XCTAssertTrue(sessions.conversation(id)?.messages.last?.text.contains("页面操作重复") == true)
         let releases = await bridge.releases; XCTAssertEqual(releases, 1)
     }
 }

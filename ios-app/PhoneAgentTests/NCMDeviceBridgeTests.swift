@@ -98,7 +98,7 @@ import LLMProviderKit
         do { _ = try await bridge.bringApplicationToForeground(bundleID: "com.ja1chen.PhoneAgent"); XCTFail("Stopped task activated") } catch {}
         XCTAssertEqual(connection.launchedBundles.count, 1)
     }
-    func testBackgroundCompletionReturnsCorrectConversationBeforeReleaseEvenIfActivationFails() async throws {
+    func testBackgroundCompletionKeepsCurrentAppAndPreservesConversationRoute() async throws {
         for activationFails in [false, true] {
             let connection = NCMConnectionSpy()
             if activationFails { connection.activationError = .timeout }
@@ -121,8 +121,8 @@ import LLMProviderKit
             XCTAssertEqual(model.activityNavigation?.route.sessionID, id)
             XCTAssertEqual(model.activityNavigation?.route.runID, run.runID)
             XCTAssertNil(model.activityNavigation?.messageID)
-            XCTAssertEqual(connection.launchedBundles, [Bundle.main.bundleIdentifier!])
-            XCTAssertEqual(connection.launchReleaseCounts, [0], "Activate before closing the device lease")
+            XCTAssertTrue(connection.launchedBundles.isEmpty, "Completion must leave the current app on screen")
+            XCTAssertTrue(connection.launchReleaseCounts.isEmpty)
             XCTAssertEqual(connection.captures, 0)
             XCTAssertEqual(connection.releases, 1)
         }
@@ -558,6 +558,14 @@ import LLMProviderKit
         XCTAssertTrue(flow.isBackground)
         XCTAssertFalse(flow.ready); XCTAssertFalse(flow.hasRecord); XCTAssertFalse(flow.running)
         flow.cancel()
+    }
+    func testPairedDisconnectedFailureRemainsVisible() {
+        XCTAssertTrue(PairingSection.shouldShowDetail(running: false, ready: false, hasRecord: true,
+            failure: "开发者镜像失败", message: "开发者镜像失败"))
+        XCTAssertTrue(PairingSection.shouldShowDetail(running: true, ready: false, hasRecord: true,
+            failure: nil, message: "发现服务"))
+        XCTAssertFalse(PairingSection.shouldShowDetail(running: false, ready: true, hasRecord: true,
+            failure: nil, message: "已连接"))
     }
     func testBackgroundKeepsIdleAuthenticatedSession() {
         let flow = PairingFlow()
