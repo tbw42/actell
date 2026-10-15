@@ -1040,6 +1040,7 @@ struct AgentRunServices {
             case .noProviderConfigured: return "请先选择服务商和模型"
             case .providerError, .providerRefused: return "模型请求失败；请检查服务商地址、模型、网络及账户状态"
             case .toolExecutionFailed, .toolNotFound: return "工具未能执行，请查看本轮工具记录"
+            case .loopDetected: return "页面操作重复且没有进展，已停止。请检查当前页面后再试。"
             default: break
             }
         }
