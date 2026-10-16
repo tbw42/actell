@@ -99,10 +99,10 @@ import LLMProviderKit
         XCTAssertEqual(connection.launchedBundles.count, 1)
     }
     func testBackgroundCompletionKeepsCurrentAppAndPreservesConversationRoute() async throws {
-        for activationFails in [false, true] {
+        for usesDevice in [false, true] {
             let connection = NCMConnectionSpy()
-            if activationFails { connection.activationError = .timeout }
             let bridge = try NCMDeviceBridge(flow: connection)
+            if usesDevice { _ = try await bridge.screenshot() }
             let lifecycle = RunLifecycleCoordinator(scheduler: NCMTestScheduler(), storage: MemoryRunCheckpointStore())
             let model = AgentViewModel(sessions: ConversationStore(inMemory: true), loadPersistentState: false,
                 runServices: AgentRunServices(provider: DisconnectedChatProvider(requestsScreenshot: false), bridge: bridge), lifecycle: lifecycle)
@@ -123,8 +123,9 @@ import LLMProviderKit
             XCTAssertNil(model.activityNavigation?.messageID)
             XCTAssertTrue(connection.launchedBundles.isEmpty, "Completion must leave the current app on screen")
             XCTAssertTrue(connection.launchReleaseCounts.isEmpty)
-            XCTAssertEqual(connection.captures, 0)
-            XCTAssertEqual(connection.releases, 1)
+            XCTAssertEqual(connection.captures, usesDevice ? 1 : 0)
+            XCTAssertEqual(connection.reservations, usesDevice ? 1 : 0)
+            XCTAssertEqual(connection.releases, usesDevice ? 1 : 0)
         }
     }
 
